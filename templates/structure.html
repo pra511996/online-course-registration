@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Course Structure (Snapshot)</h1>
+<div class="card">
+  <table>
+    <tr><th>ID</th><th>Title</th><th>Capacity</th><th>Enrolled</th><th>Seats Available</th></tr>
+    {% for c in snapshot %}
+      <tr>
+        <td>{{ c.course_id }}</td>
+        <td>{{ c.title }}</td>
+        <td>{{ c.capacity }}</td>
+        <td>{{ c.enrolled }}</td>
+        <td>{{ 'Yes' if c.has_seat else 'No' }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

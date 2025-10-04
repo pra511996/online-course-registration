@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Student Dashboard</h1>
+<div class="card">
+  <h2>Browse / Search Courses</h2>
+  <form method="get">
+    <input name="q" placeholder="Search by ID or Title" value="{{ request.args.get('q','') }}">
+    <button type="submit">Search</button>
+  </form>
+  <table>
+    <tr><th>ID</th><th>Title</th><th>Seats</th><th></th></tr>
+    {% for c in courses %}
+      <tr>
+        <td>{{ c.course_id }}</td>
+        <td>{{ c.title }}</td>
+        <td>{{ c.enrolled_students|length }}/{{ c.capacity }} {% if c.has_seat() %}✅{% else %}❌{% endif %}</td>
+        <td>
+          <form method="post" action="{{ url_for('enroll_course') }}">
+            {{ csrf_token() }}
+            <input type="hidden" name="course_id" value="{{ c.course_id }}">
+            <button {% if not c.has_seat() %}disabled{% endif %}>Register</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+<div class="card">
+  <h2>My Courses</h2>
+  <ul>
+  {% for c in current_student.registered_courses %}
+    <li>{{ c.course_id }} - {{ c.title }}
+      <form method="post" action="{{ url_for('drop_course') }}">
+        {{ csrf_token() }}
+        <input type="hidden" name="course_id" value="{{ c.course_id }}">
+        <button>Drop</button>
+      </form>
+    </li>
+  {% else %}
+    <li>No registrations yet.</li>
+  {% endfor %}
+  </ul>
+</div>
+{% endblock %}

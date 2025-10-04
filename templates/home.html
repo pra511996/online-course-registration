@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Welcome to Course Registration</h1>
+<p class="muted">Select an action below:</p>
+<div class="grid">
+  <a class="tile" href="{{ url_for('login') }}">
+    <h2>Secure Login</h2>
+    <p>Sign in as a student or admin.</p>
+  </a>
+  <a class="tile" href="{{ url_for('student_dashboard') if session.get('role')=='student' else url_for('login') }}">
+    <h2>Browse / Search Courses</h2>
+    <p>Find courses by ID or title.</p>
+  </a>
+  <a class="tile" href="{{ url_for('student_dashboard') if session.get('role')=='student' else url_for('login') }}">
+    <h2>Register for Course</h2>
+    <p>Enroll with one click from your dashboard.</p>
+  </a>
+  <a class="tile" href="{{ url_for('student_dashboard') if session.get('role')=='student' else url_for('login') }}">
+    <h2>Drop Course</h2>
+    <p>Visit your dashboard to drop a course.</p>
+  </a>
+  <a class="tile" href="{{ url_for('view_structure') if session.get('user') else url_for('login') }}">
+    <h2>View Structure</h2>
+    <p>See capacities and enrollment for all courses.</p>
+  </a>
+  <a class="tile" href="{{ url_for('admin_dashboard') if session.get('role')=='admin' else url_for('login') }}">
+    <h2>Manage Courses</h2>
+    <p>Create courses and students.</p>
+  </a>
+  <a class="tile" href="{{ url_for('admin_limits') if session.get('role')=='admin' else url_for('login') }}">
+    <h2>Set Enrolment Limits</h2>
+    <p>Adjust course capacity safely.</p>
+  </a>
+</div>
+{% endblock %}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{{ title or "Course Registration" }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="nav">
+    <div><a href="{{ url_for('home') }}">📚 Course Registration</a></div>
+    <div>
+      <a href="{{ url_for('home') }}">Home</a>
+      {% if session.get('user') %}
+        {% if session.get('role') == 'student' %}<a href="{{ url_for('student_dashboard') }}">Student</a>{% endif %}
+        {% if session.get('role') == 'admin' %}<a href="{{ url_for('admin_dashboard') }}">Admin</a> <a href="{{ url_for('admin_limits') }}">Set Limits</a>{% endif %}
+        <a href="{{ url_for('logout') }}">Logout</a>
+      {% else %}
+        <a href="{{ url_for('login') }}">Login</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash">
+          {% for cat,msg in messages %}
+            <div class="{{ 'ok' if cat=='success' else 'err' }}">{{ msg }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

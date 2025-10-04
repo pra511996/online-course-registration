@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h1>Secure Login</h1>
+  <form method="post">
+    {{ csrf_token() }}
+    <label>Username <input name="username" required></label><br>
+    <label>Password <input type="password" name="password" required></label><br>
+    <button type="submit">Login</button>
+  </form>
+  <p class="muted">Demo: student <code>alice/Password1!</code>, admin <code>admin/Password1!</code></p>
+</div>
+{% endblock %}

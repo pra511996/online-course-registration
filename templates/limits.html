@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Set Enrolment Limits</h1>
+<div class="card">
+  <form method="post">
+    {{ csrf_token() }}
+    <label>Course
+      <select name="course_id" required>
+        <option value="">-- Select Course --</option>
+        {% for c in courses %}
+          <option value="{{ c.course_id }}">{{ c.course_id }} — {{ c.title }} (current: {{ c.capacity }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>New Capacity
+      <input type="number" name="capacity" min="1" required>
+    </label>
+    <button type="submit">Update Capacity</button>
+  </form>
+</div>
+{% endblock %}
