@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>Admin — Manage Courses</h2>
+  <form method="post" action="{{ url_for('add_course') }}" class="inline-form">
+    <input name="code" placeholder="Code (e.g., CMSC101)" required>
+    <input name="title" placeholder="Title" required>
+    <input name="credits" type="number" min="1" value="3" required>
+    <button type="submit">Add Course</button>
+  </form>
+  <table>
+    <tr><th>Code</th><th>Title</th><th>Credits</th><th>Actions</th></tr>
+    {% for c in courses %}
+    <tr>
+      <td>{{ c['code'] }}</td><td>{{ c['title'] }}</td><td>{{ c['credits'] }}</td>
+      <td>
+        <form method="post" action="{{ url_for('delete_course', course_id=c['id']) }}"><button>Delete</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

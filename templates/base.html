@@ -1,35 +1,27 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>{{ title or "Course Registration" }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-</head>
-<body>
-  <div class="nav">
-    <div><a href="{{ url_for('home') }}">📚 Course Registration</a></div>
-    <div>
-      <a href="{{ url_for('home') }}">Home</a>
-      {% if session.get('user') %}
-        {% if session.get('role') == 'student' %}<a href="{{ url_for('student_dashboard') }}">Student</a>{% endif %}
-        {% if session.get('role') == 'admin' %}<a href="{{ url_for('admin_dashboard') }}">Admin</a> <a href="{{ url_for('admin_limits') }}">Set Limits</a>{% endif %}
-        <a href="{{ url_for('logout') }}">Logout</a>
-      {% else %}
-        <a href="{{ url_for('login') }}">Login</a>
-      {% endif %}
-    </div>
-  </div>
-  <div class="container">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <div class="flash">
-          {% for cat,msg in messages %}
-            <div class="{{ 'ok' if cat=='success' else 'err' }}">{{ msg }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    {% endwith %}
-    {% block content %}{% endblock %}
-  </div>
-</body>
-</html>
+{% set user = user if user is defined else None %}
+<!doctype html><html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Online Course Registration</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head><body>
+<header><h1>Online Course Registration System</h1>
+<nav>
+{% if session.get('user_id') %}
+  <a href="{{ url_for('dashboard') }}">Dashboard</a>
+  {% if user and user['role']=='admin' %}<a href="{{ url_for('admin_courses') }}">Admin</a>{% endif %}
+  <a href="{{ url_for('logout') }}">Logout</a>
+{% else %}
+  <a href="{{ url_for('login') }}">Login</a>
+{% endif %}
+</nav></header>
+<main>
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}<ul class="flashes">
+    {% for category, message in messages %}
+      <li class="{{ category }}">{{ message }}</li>
+    {% endfor %}
+  </ul>{% endif %}{% endwith %}
+{% block content %}{% endblock %}
+</main>
+<footer><small>&copy; CMSC 495 Group 2</small></footer>
+</body></html>

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+{% set user = user %}
+<section class="card">
+  <h2>Welcome, {{ user['username'] }}</h2>
+  <p>Total Enrolled Credits: <strong>{{ total_credits }}</strong> (Max 9)</p>
+  <div class="grid">
+    <div>
+      <h3>Your Enrollments</h3>
+      <table>
+        <tr><th>Code</th><th>Title</th><th>Credits</th><th>Action</th></tr>
+        {% for c in enrolled %}
+        <tr>
+          <td>{{ c['code'] }}</td><td>{{ c['title'] }}</td><td>{{ c['credits'] }}</td>
+          <td><form method="post" action="{{ url_for('drop', course_id=c['id']) }}"><button>Drop</button></form></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4">No enrollments yet.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+    <div>
+      <h3>Available Courses</h3>
+      <table>
+        <tr><th>Code</th><th>Title</th><th>Credits</th><th></th></tr>
+        {% for c in all_courses %}
+        <tr>
+          <td>{{ c['code'] }}</td><td>{{ c['title'] }}</td><td>{{ c['credits'] }}</td>
+          <td><form method="post" action="{{ url_for('register', course_id=c['id']) }}"><button>Enroll</button></form></td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,272 +1,259 @@
-
-from flask import Flask, request, redirect, url_for, render_template, flash, session
-from flask_wtf import CSRFProtect
+from flask import Flask, render_template, request, redirect, url_for, session, flash, g
+import sqlite3, os
 from werkzeug.security import generate_password_hash, check_password_hash
-from functools import wraps
+from datetime import timedelta
 
-# ------------------------
-# Core Models & Exceptions
-# ------------------------
-class CapacityFullError(Exception): pass
-class NotEnrolledError(Exception): pass
-class DuplicateEnrollError(Exception): pass
-class NotFoundError(Exception): pass
+DATABASE = os.path.join(os.path.dirname(__file__), "ocrs.db")
 
-class Course:
-    def __init__(self, course_id, title, capacity):
-        self.course_id = course_id
-        self.title = title
-        self.capacity = int(capacity)
-        self.enrolled_students = []
+def get_db():
+    if 'db' not in g:
+        g.db = sqlite3.connect(DATABASE)
+        g.db.row_factory = sqlite3.Row
+    return g.db
 
-    def has_seat(self):
-        return len(self.enrolled_students) < self.capacity
+def close_db(e=None):
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
 
-    def register_student(self, student):
-        if student in self.enrolled_students:
-            raise DuplicateEnrollError(f"{student.student_id} already enrolled in {self.course_id}")
-        if not self.has_seat():
-            raise CapacityFullError(f"{self.course_id} is full")
-        self.enrolled_students.append(student)
-        return True
+def init_db():
+    db = get_db()
+    db.executescript('''
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT CHECK(role IN ('student','admin')) NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS courses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        title TEXT NOT NULL,
+        credits INTEGER NOT NULL CHECK(credits > 0)
+    );
+    CREATE TABLE IF NOT EXISTS enrollments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        course_id INTEGER NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
+        UNIQUE(user_id, course_id)
+    );
+    ''')
+    db.commit()
 
-    def drop_student(self, student):
-        if student not in self.enrolled_students:
-            raise NotEnrolledError(f"{student.student_id} not enrolled in {self.course_id}")
-        self.enrolled_students.remove(student)
-        return True
+def seed_demo():
+    db = get_db()
 
-class Student:
-    def __init__(self, student_id, name):
-        self.student_id = student_id
-        self.name = name
-        self.registered_courses = []
+    def maybe_user(username, password, role):
+        if not db.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+            db.execute(
+                "INSERT INTO users (username,password_hash,role) VALUES (?,?,?)",
+                (username, generate_password_hash(password), role)
+            )
 
-    def register_for_course(self, course):
-        if course.register_student(self):
-            if course not in self.registered_courses:
-                self.registered_courses.append(course)
-            return True
-        return False
+    maybe_user("student1", "pass123", "student")
+    maybe_user("admin", "admin123", "admin")
 
-    def drop_course(self, course):
-        if course.drop_student(self):
-            if course in self.registered_courses:
-                self.registered_courses.remove(course)
-            return True
-        return False
+    for code, title, credits in [
+        ("CMSC101", "Intro to Programming", 3),
+        ("CMSC215", "Data Structures", 4),
+        ("CMSC325", "Database Systems", 3),
+        ("CMSC330", "Web Development", 3),
+        ("CMSC340", "Software Engineering", 3),
+    ]:
+        if not db.execute("SELECT 1 FROM courses WHERE code=?", (code,)).fetchone():
+            db.execute(
+                "INSERT INTO courses(code,title,credits) VALUES(?,?,?)",
+                (code, title, credits)
+            )
+    db.commit()
 
-class RegistrationSystem:
-    def __init__(self):
-        self.courses = {}
-        self.students = {}
+def create_app():
+    app = Flask(__name__)
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY", "devsecret")
+    app.permanent_session_lifetime = timedelta(hours=8)
 
-    def add_course(self, course):
-        self.courses[course.course_id] = course
+    # Secure session cookies (aligns with non-functional reqs)
+    app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=bool(os.environ.get("FLASK_COOKIE_SECURE", ""))  # set env var to enable on HTTPS
+    )
 
-    def add_student(self, student):
-        self.students[student.student_id] = student
+    app.teardown_appcontext(close_db)
 
-    def get_course(self, course_id):
-        if course_id not in self.courses:
-            raise NotFoundError(f"Course {course_id} not found")
-        return self.courses[course_id]
+    @app.before_request
+    def _ensure_db():
+        # Ensures tables exist; cheap no-op after first create
+        init_db()
 
-    def get_student(self, student_id):
-        if student_id not in self.students:
-            raise NotFoundError(f"Student {student_id} not found")
-        return self.students[student_id]
+    # Initialize schema + seed once at startup (safe to call repeatedly)
+    with app.app_context():
+        init_db()
+        seed_demo()
 
-    def enroll(self, student_id, course_id):
-        return self.get_student(student_id).register_for_course(self.get_course(course_id))
+    def current_user():
+        if 'user_id' in session:
+            return get_db().execute(
+                "SELECT * FROM users WHERE id=?", (session['user_id'],)
+            ).fetchone()
+        return None
 
-    def drop(self, student_id, course_id):
-        return self.get_student(student_id).drop_course(self.get_course(course_id))
+    def login_required(role=None):
+        from functools import wraps
+        def deco(fn):
+            @wraps(fn)
+            def wrapper(*a, **k):
+                u = current_user()
+                if not u:
+                    flash("Please log in.", "warning")
+                    return redirect(url_for('login'))
+                if role and u['role'] != role:
+                    flash("Unauthorized.", "danger")
+                    return redirect(url_for('dashboard'))
+                return fn(*a, **k)
+            return wrapper
+        return deco
 
-# ------------------------
-# Flask App Setup
-# ------------------------
-app = Flask(__name__)
-app.config['SECRET_KEY'] = "dev-secret-change-me"
-csrf = CSRFProtect(app)
+    @app.route('/')
+    def index():
+        return redirect(url_for('dashboard') if session.get('user_id') else url_for('login'))
 
-system = RegistrationSystem()
+    @app.route('/login', methods=['GET', 'POST'])
+    def login():
+        if request.method == 'POST':
+            u = request.form['username'].strip()
+            p = request.form['password']
+            row = get_db().execute("SELECT * FROM users WHERE username=?", (u,)).fetchone()
+            if row and check_password_hash(row['password_hash'], p):
+                session['user_id'] = row['id']
+                session.permanent = True
+                flash(f"Welcome, {u}!", "success")
+                return redirect(url_for('dashboard'))
+            flash("Invalid credentials.", "danger")
+        return render_template('login.html')
 
-# seed demo data
-for c in [
-    Course("CMSC101", "Intro to Computer Science", 3),
-    Course("CMSC220", "Data Structures", 2),
-    Course("CMSC330", "Advanced Programming", 2),
-    Course("CMSC495", "Capstone Project", 1),
-]:
-    system.add_course(c)
-alice = Student("S001", "Alice")
-bob = Student("S002", "Bob")
-system.add_student(alice); system.add_student(bob)
+    @app.route('/logout')
+    def logout():
+        session.clear()
+        flash("Logged out.", "info")
+        return redirect(url_for('login'))
 
-# demo users
-USERS = {
-    "alice": {"pw": generate_password_hash("Password1!"), "role": "student", "student_id": "S001"},
-    "admin": {"pw": generate_password_hash("Password1!"), "role": "admin"},
-}
+    @app.route('/dashboard')
+    def dashboard():
+        db = get_db()
+        u = current_user()
+        if not u:
+            return redirect(url_for('login'))
+        enrolled = db.execute("""
+            SELECT c.* FROM enrollments e
+            JOIN courses c ON c.id = e.course_id
+            WHERE e.user_id = ?
+        """, (u['id'],)).fetchall()
+        courses = db.execute("SELECT * FROM courses ORDER BY code").fetchall()
+        total = sum([c['credits'] for c in enrolled])
+        return render_template('dashboard.html', user=u, enrolled=enrolled, all_courses=courses, total_credits=total)
 
-# ------------------------
-# Auth Helpers
-# ------------------------
-def login_required(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if not session.get("user"):
-            flash("Please sign in first.", "error")
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return wrapper
+    MAX_CREDITS = 9
 
-def role_required(role):
-    def deco(f):
-        @wraps(f)
-        def wrapper(*args, **kwargs):
-            if session.get("role") != role:
-                flash("Not authorized.", "error")
-                return redirect(url_for("home"))
-            return f(*args, **kwargs)
-        return wrapper
-    return deco
+    @app.route('/register/<int:course_id>', methods=['POST'])
+    def register(course_id):
+        u = current_user()
+        if not u:
+            flash("Please log in.", "warning")
+            return redirect(url_for('login'))
 
-# ------------------------
-# Routes
-# ------------------------
-@app.route("/")
-def home():
-    # New professional homepage with feature tiles (links)
-    return render_template("home.html", title="Home")
+        db = get_db()
+        if db.execute(
+            "SELECT 1 FROM enrollments WHERE user_id=? AND course_id=?",
+            (u['id'], course_id)
+        ).fetchone():
+            flash("Already enrolled.", "warning")
+            return redirect(url_for('dashboard'))
 
-@app.route("/login", methods=["GET","POST"])
-def login():
-    if request.method == "POST":
-        username = request.form.get("username","").lower()
-        password = request.form.get("password","")
-        user = USERS.get(username)
-        if not user or not check_password_hash(user["pw"], password):
-            flash("Invalid credentials", "error")
-            return redirect(url_for("login"))
-        session["user"] = username
-        session["role"] = user["role"]
-        if user.get("student_id"):
-            session["student_id"] = user["student_id"]
-        flash(f"Welcome {username}", "success")
-        return redirect(url_for("home"))
-    return render_template("login.html", title="Login")
+        total = db.execute("""
+            SELECT COALESCE(SUM(c.credits),0)
+            FROM enrollments e JOIN courses c ON c.id = e.course_id
+            WHERE e.user_id = ?
+        """, (u['id'],)).fetchone()[0]
 
-@app.route("/logout")
-def logout():
-    session.clear()
-    flash("Signed out", "success")
-    return redirect(url_for("home"))
+        course = db.execute("SELECT * FROM courses WHERE id=?", (course_id,)).fetchone()
+        if not course:
+            flash("Course not found.", "danger")
+            return redirect(url_for('dashboard'))
 
-@app.route("/student")
-@login_required
-@role_required("student")
-def student_dashboard():
-    q = request.args.get("q","").lower()
-    courses = list(system.courses.values())
-    if q:
-        courses = [c for c in courses if q in (c.course_id + " " + c.title).lower()]
-    current_student = system.get_student(session["student_id"])
-    return render_template("student.html", courses=courses, current_student=current_student, title="Student")
+        if total + course['credits'] > MAX_CREDITS:
+            flash(f"Credit limit exceeded (max {MAX_CREDITS}).", "danger")
+            return redirect(url_for('dashboard'))
 
-@app.route("/student/enroll", methods=["POST"])
-@login_required
-@role_required("student")
-def enroll_course():
-    sid = session.get("student_id"); cid = request.form.get("course_id")
-    try:
-        system.enroll(sid, cid)
-        flash(f"Enrolled in {cid}", "success")
-    except Exception as e:
-        flash(str(e), "error")
-    return redirect(url_for("student_dashboard"))
+        db.execute("INSERT INTO enrollments(user_id, course_id) VALUES(?, ?)", (u['id'], course_id))
+        db.commit()
+        flash("Enrolled.", "success")
+        return redirect(url_for('dashboard'))
 
-@app.route("/student/drop", methods=["POST"])
-@login_required
-@role_required("student")
-def drop_course():
-    sid = session.get("student_id"); cid = request.form.get("course_id")
-    try:
-        system.drop(sid, cid)
-        flash(f"Dropped {cid}", "success")
-    except Exception as e:
-        flash(str(e), "error")
-    return redirect(url_for("student_dashboard"))
+    @app.route('/drop/<int:course_id>', methods=['POST'])
+    def drop(course_id):
+        u = current_user()
+        if not u:
+            flash("Please log in.", "warning")
+            return redirect(url_for('login'))
+        db = get_db()
+        db.execute("DELETE FROM enrollments WHERE user_id=? AND course_id=?", (u['id'], course_id))
+        db.commit()
+        flash("Dropped.", "info")
+        return redirect(url_for('dashboard'))
 
-@app.route("/structure")
-@login_required
-def view_structure():
-    # Simple "structure" page that shows all courses and enrollment snapshot
-    snapshot = [
-        {
-            "course_id": c.course_id,
-            "title": c.title,
-            "capacity": c.capacity,
-            "enrolled": len(c.enrolled_students),
-            "has_seat": c.has_seat(),
-        } for c in system.courses.values()
-    ]
-    return render_template("structure.html", snapshot=snapshot, title="Structure")
+    @app.route('/admin/courses')
+    def admin_courses():
+        u = current_user()
+        if not u or u['role'] != 'admin':
+            flash("Unauthorized.", "danger")
+            return redirect(url_for('dashboard'))
+        courses = get_db().execute("SELECT * FROM courses ORDER BY code").fetchall()
+        return render_template('admin_courses.html', courses=courses, user=u)
 
-@app.route("/admin")
-@login_required
-@role_required("admin")
-def admin_dashboard():
-    return render_template("admin.html", courses=system.courses.values(), title="Admin")
+    @app.route('/admin/courses/add', methods=['POST'])
+    def add_course():
+        u = current_user()
+        if not u or u['role'] != 'admin':
+            flash("Unauthorized.", "danger")
+            return redirect(url_for('dashboard'))
 
-@app.route("/admin/course", methods=["POST"])
-@login_required
-@role_required("admin")
-def admin_create_course():
-    cid = request.form.get("course_id"); title = request.form.get("title"); cap = int(request.form.get("capacity","0"))
-    if not cid or not title or cap <= 0:
-        flash("Provide Course ID, Title, and positive Capacity.", "error")
-        return redirect(url_for("admin_dashboard"))
-    system.add_course(Course(cid, title, cap))
-    flash(f"Course {cid} created", "success")
-    return redirect(url_for("admin_dashboard"))
-
-@app.route("/admin/student", methods=["POST"])
-@login_required
-@role_required("admin")
-def admin_create_student():
-    sid = request.form.get("student_id"); name = request.form.get("name")
-    if not sid or not name:
-        flash("Provide Student ID and Name.", "error")
-        return redirect(url_for("admin_dashboard"))
-    system.add_student(Student(sid, name))
-    flash(f"Student {sid} created", "success")
-    return redirect(url_for("admin_dashboard"))
-
-# NEW: Set Enrollment Limits (change capacity)
-@app.route("/admin/limits", methods=["GET","POST"])
-@login_required
-@role_required("admin")
-def admin_limits():
-    if request.method == "POST":
-        cid = request.form.get("course_id")
+        code = request.form['code'].strip().upper()
+        title = request.form['title'].strip()
+        credits = int(request.form['credits'])
+        db = get_db()
         try:
-            new_cap = int(request.form.get("capacity","0"))
-        except ValueError:
-            new_cap = 0
-        if not cid or new_cap <= 0:
-            flash("Select a course and set a positive capacity.", "error")
-            return redirect(url_for("admin_limits"))
-        course = system.get_course(cid)
-        # If shrinking capacity below current enrollment, prevent it
-        if new_cap < len(course.enrolled_students):
-            flash(f"Cannot set capacity below current enrollment ({len(course.enrolled_students)}).", "error")
-            return redirect(url_for("admin_limits"))
-        course.capacity = new_cap
-        flash(f"Capacity for {cid} set to {new_cap}.", "success")
-        return redirect(url_for("admin_limits"))
-    return render_template("limits.html", courses=system.courses.values(), title="Enrollment Limits")
+            db.execute("INSERT INTO courses(code,title,credits) VALUES(?,?,?)", (code, title, credits))
+            db.commit()
+            flash("Added course.", "success")
+        except sqlite3.IntegrityError:
+            flash("Course exists or invalid.", "danger")
+        return redirect(url_for('admin_courses'))
+
+    @app.route('/admin/courses/<int:course_id>/delete', methods=['POST'])
+    def delete_course(course_id):
+        u = current_user()
+        if not u or u['role'] != 'admin':
+            flash("Unauthorized.", "danger")
+            return redirect(url_for('dashboard'))
+        db = get_db()
+        db.execute("DELETE FROM courses WHERE id=?", (course_id,))
+        db.commit()
+        flash("Deleted.", "info")
+        return redirect(url_for('admin_courses'))
+
+    @app.cli.command("initdb")
+    def _initdb():
+        init_db()
+        seed_demo()
+        print("Database initialized and demo data seeded.")
+
+    return app
 
 if __name__ == "__main__":
+    app = create_app()
+    # Use FLASK_COOKIE_SECURE=1 env var when serving over HTTPS
     app.run(debug=True)
